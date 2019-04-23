@@ -28,7 +28,7 @@ double dt = 0.1;
 const double Lf = 2.67;
   
 // Reference values for MPC
-double ref_v = 120;
+double ref_v = 100;
 double ref_epsi = 0;
 double ref_cte = 0;
 
