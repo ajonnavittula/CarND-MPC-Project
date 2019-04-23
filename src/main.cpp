@@ -41,19 +41,68 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
+          vector<double> ptsx_map = j[1]["ptsx"];
+          vector<double> ptsy_map = j[1]["ptsy"];
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
-          /**
-           * TODO: Calculate steering angle and throttle using MPC.
-           * Both are in between [-1, 1].
-           */
-          double steer_value;
-          double throttle_value;
+          // Get current steer and throttle values
+          double steer_value = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];
+
+          // Some variables for brevity
+          double x_diff, y_diff;
+          // Latency in ms
+          int latency = 100;
+          // Latency in s 
+          double dt = latency / 1000.0;
+          // Constant
+          double Lf = 2.67;
+
+          // Equations to account for latency
+          px = px + v * cos(psi) * dt;
+          py = py + v * sin(psi) * dt;
+          psi = psi - v * steer_value / Lf * dt;
+
+
+          // Create vectors for transformation
+          Eigen::VectorXd ptsx_car(ptsx_map.size());
+          Eigen::VectorXd ptsy_car(ptsy_map.size());
+
+          for (unsigned int i = 0; i < ptsx_map.size(); i++) {
+
+            x_diff = ptsx_map[i] - px;
+            y_diff = ptsy_map[i] - py;
+
+            ptsx_car[i] = x_diff * cos(-psi) - y_diff * sin(-psi);
+            ptsy_car[i] = x_diff * sin(-psi) + y_diff * cos(-psi);
+          }
+
+          // Get 3rd order equation coefficients
+          auto coeffs = polyfit(ptsx_car, ptsy_car, 3);
+
+          // Calculate errors
+          double cte = polyeval(coeffs, 0);
+          double epsi = -atan(coeffs[1]);
+
+          Eigen::VectorXd state(6);
+          
+          // New state
+          state << 0,
+                   0,
+                   0,
+                   v,
+                   cte,
+                   epsi;
+
+          // Get steer and throttle values for the car         
+          auto result = mpc.Solve(state, coeffs);
+
+          steer_value = -result[0] / (deg2rad(25) * Lf);
+          throttle_value = result[1];
+
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the 
@@ -71,6 +120,11 @@ int main() {
            *   the vehicle's coordinate system the points in the simulator are 
            *   connected by a Green line
            */
+          for (unsigned int i = 2; i < result.size(); i++){
+
+            if (i%2 == 0) {mpc_x_vals.push_back(result[i]);}
+            else {mpc_y_vals.push_back(result[i]);}
+          }
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
@@ -79,11 +133,11 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          /**
-           * TODO: add (x,y) points to list here, points are in reference to 
-           *   the vehicle's coordinate system the points in the simulator are 
-           *   connected by a Yellow line
-           */
+          for (int i = 0; i < ptsx_car.size(); i++){
+
+              next_x_vals.push_back(ptsx_car[i]);
+              next_y_vals.push_back(ptsy_car[i]);
+          }
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
@@ -99,7 +153,7 @@ int main() {
           //   around the track with 100ms latency.
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE SUBMITTING.
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          std::this_thread::sleep_for(std::chrono::milliseconds(latency));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }  // end "telemetry" if
       } else {
